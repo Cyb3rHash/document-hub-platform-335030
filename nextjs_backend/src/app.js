@@ -3,6 +3,7 @@ const express = require('express');
 const routes = require('./routes');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('../swagger');
+const { attachSupabaseAndAuth } = require('./middleware/auth');
 
 // Initialize express app
 const app = express();
@@ -40,6 +41,9 @@ app.use('/docs', swaggerUi.serve, (req, res, next) => {
 
 // Parse JSON request body
 app.use(express.json());
+
+// Attach Supabase clients + auth context (non-enforcing)
+app.use(attachSupabaseAndAuth);
 
 // Mount routes
 app.use('/', routes);
