@@ -45,8 +45,17 @@ app.use(express.json());
 // Attach Supabase clients + auth context (non-enforcing)
 app.use(attachSupabaseAndAuth);
 
-// Mount routes
+/**
+ * Mount routes.
+ *
+ * The frontend calls endpoints under `/api/*` (e.g. `/api/documents`), while our OpenAPI
+ * paths are defined without the `/api` prefix (e.g. `/documents`).
+ *
+ * To support both deployments and avoid 404/500 issues behind proxies/rewrites,
+ * we mount the same router at both `/` and `/api`.
+ */
 app.use('/', routes);
+app.use('/api', routes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

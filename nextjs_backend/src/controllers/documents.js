@@ -439,7 +439,14 @@ class DocumentsController {
       const isAuthed = Boolean(req.auth?.userId);
       const isAdmin = await this._isAdminCached(req);
 
-      let query = req.supabaseAdmin
+      // IMPORTANT:
+      // - If caller is authenticated and we have a user-scoped Supabase client (req.supabase),
+      //   use it so Postgres RLS is enforced by the Bearer JWT as intended.
+      // - If caller is anonymous, fall back to service role but explicitly restrict to
+      //   public/unlisted to avoid leaking private documents.
+      const client = isAuthed && req.supabase ? req.supabase : req.supabaseAdmin;
+
+      let query = client
         .from('documents')
         .select(
           'id,owner_id,title,description,visibility,mime_type,original_filename,file_size_bytes,storage_bucket,storage_path,preview_storage_path,status,disable_download,watermark_text,view_count,created_at,updated_at',
