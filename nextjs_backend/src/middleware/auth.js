@@ -2,15 +2,36 @@ const { createClient } = require('@supabase/supabase-js');
 const { getSupabaseAdmin } = require('../config/supabase');
 
 /**
- * Extracts a bearer token from an Authorization header.
+ * Extract a bearer token from incoming request headers.
  *
- * @param {string | undefined} header Authorization header value
- * @returns {string | null} token or null
+ * Supported sources (in order):
+ * - Authorization: Bearer <jwt>
+ * - authorization-token: Bearer <jwt> (seen in some proxies)
+ * - x-supabase-auth: Bearer <jwt> (non-standard, but sometimes used)
+ *
+ * Contract:
+ * - Inputs: Express req.headers
+ * - Output: { token: string|null, source: string|null }
+ * - Errors: none (never throws)
+ * - Side effects: none
  */
-function extractBearerToken(header) {
-  if (!header) return null;
-  const match = header.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1] : null;
+function extractBearerTokenFromHeaders(headers) {
+  const candidates = [
+    { key: 'authorization', value: headers?.authorization },
+    { key: 'authorization-token', value: headers?.['authorization-token'] },
+    { key: 'x-supabase-auth', value: headers?.['x-supabase-auth'] },
+  ];
+
+  for (const c of candidates) {
+    if (!c.value) continue;
+    const raw = Array.isArray(c.value) ? c.value[0] : String(c.value);
+    const match = raw.match(/^Bearer\s+(.+)$/i);
+    if (match && match[1]) {
+      return { token: match[1], source: c.key };
+    }
+  }
+
+  return { token: null, source: null };
 }
 
 /**
@@ -58,10 +79,36 @@ function getSupabaseUserClient(jwt) {
  */
 // PUBLIC_INTERFACE
 async function attachSupabaseAndAuth(req, res, next) {
+  /**
+   * AttachSupabaseAndAuthFlow
+   *
+   * Purpose:
+   * - Attach request-scoped supabase clients and auth context derived from a Bearer token.
+   *
+   * Contract:
+   * - Inputs: Express (req,res,next)
+   * - Outputs:
+   *   - req.auth = { token, userId, role, tokenSource, error? }
+   *   - req.supabaseAdmin: service-role supabase client OR null when env missing
+   *   - req.supabase: user-scoped supabase client OR null
+   *   - response headers may include x-auth-debug when auth cannot be evaluated
+   * - Errors: never throws to caller; forwards unexpected errors to express error handler
+   * - Side effects: calls Supabase Auth getUser(token) when possible
+   *
+   * Observability:
+   * - x-auth-debug: machine-readable reason when request is unauthenticated due to config/token issues
+   */
   try {
+    const { token, source } = extractBearerTokenFromHeaders(req.headers);
+
     // Default request auth context (always present).
-    const token = extractBearerToken(req.headers.authorization);
-    req.auth = { token, userId: null, role: 'anon' };
+    req.auth = {
+      token,
+      tokenSource: source,
+      userId: null,
+      role: 'anon',
+      error: null,
+    };
 
     // Default supabase clients to null; controllers can decide how to behave.
     req.supabaseAdmin = null;
@@ -75,6 +122,10 @@ async function attachSupabaseAndAuth(req, res, next) {
       req.supabaseAdmin = getSupabaseAdmin();
     } catch (e) {
       req.supabaseEnvMissing = true;
+      if (token) {
+        req.auth.error = 'SUPABASE_ADMIN_ENV_MISSING';
+        res.setHeader('x-auth-debug', 'supabase_admin_env_missing');
+      }
       return next();
     }
 
@@ -83,6 +134,8 @@ async function attachSupabaseAndAuth(req, res, next) {
     // Verify token via admin (service role). This avoids trusting unverified JWT claims.
     const { data, error } = await req.supabaseAdmin.auth.getUser(token);
     if (error || !data?.user) {
+      req.auth.error = 'INVALID_OR_EXPIRED_TOKEN';
+      res.setHeader('x-auth-debug', 'invalid_or_expired_token');
       // Keep request unauthenticated but do not hard-fail; route handlers can requireAuth.
       return next();
     }
@@ -92,11 +145,12 @@ async function attachSupabaseAndAuth(req, res, next) {
 
     // A user-scoped client additionally requires SUPABASE_ANON_KEY; if it's missing,
     // keep request authenticated but skip attaching req.supabase so controllers can
-    // fall back to admin or return a clearer error.
+    // return a clearer error for RLS-reliant operations.
     try {
       req.supabase = getSupabaseUserClient(token);
     } catch (e) {
       req.supabase = null;
+      res.setHeader('x-auth-debug', 'supabase_anon_env_missing_for_rls_client');
     }
 
     return next();
@@ -111,10 +165,18 @@ async function attachSupabaseAndAuth(req, res, next) {
 // PUBLIC_INTERFACE
 function requireAuth(req, res, next) {
   if (!req.auth?.userId) {
+    // Provide debuggable, non-sensitive context. This is crucial for cases where
+    // the client DID send a Bearer token but the backend could not validate it
+    // due to missing Supabase env or an expired token.
+    const details = req.auth?.error
+      ? { reason: req.auth.error, tokenSource: req.auth.tokenSource || null }
+      : { reason: 'MISSING_BEARER_TOKEN', tokenSource: req.auth?.tokenSource || null };
+
     return res.status(401).json({
       status: 'error',
       code: 'UNAUTHORIZED',
-      message: 'Authentication required (missing/invalid bearer token).',
+      message: 'Authentication required.',
+      details,
     });
   }
   return next();
@@ -172,4 +234,3 @@ module.exports = {
   requireAuth,
   requireAdmin,
 };
-
