@@ -42,23 +42,75 @@ function parseBooleanLike(v) {
 }
 
 /**
- * UploadDocumentFlow
+ * EnsureUserProfileRowFlow
  *
- * Single canonical flow for: create document metadata + upload storage object + update row.
+ * Ensures that the authenticated user has a corresponding row in `public.profiles`.
+ *
+ * Why this exists:
+ * - `public.documents.owner_id` has a FK to `public.profiles.id`.
+ * - In some environments/users, a valid Supabase Auth user may exist without a `profiles` row
+ *   (e.g. created outside our `/auth/signup` endpoint, legacy users, or previous failure).
  *
  * Contract:
- * - Inputs: { ownerId, title, description?, visibility, file{buffer,mimetype,originalname,size}, disable_download?, watermark_text? }
+ * - Inputs:
+ *   - supabaseAdmin: Supabase service-role client (bypasses RLS)
+ *   - userId: uuid (required)
+ *   - userEmail?: string|null (optional best-effort field)
+ * - Output: { ensured: true }
+ * - Errors:
+ *   - throws { httpStatus: 500, code: 'PROFILE_ENSURE_FAILED', message, details }
+ * - Side effects: upserts into public.profiles (id/email)
+ */
+async function ensureUserProfileRowFlow({ supabaseAdmin, userId, userEmail }) {
+  if (!userId) {
+    throw { httpStatus: 500, code: 'PROFILE_ENSURE_FAILED', message: 'userId is required to ensure profile row.' };
+  }
+
+  // Service role bypasses RLS; onConflict=id makes this idempotent.
+  const { error } = await supabaseAdmin
+    .from('profiles')
+    .upsert(
+      {
+        id: userId,
+        email: userEmail || null,
+      },
+      { onConflict: 'id' }
+    );
+
+  if (error) {
+    throw {
+      httpStatus: 500,
+      code: 'PROFILE_ENSURE_FAILED',
+      message: 'Failed to ensure user profile row.',
+      details: error.message,
+    };
+  }
+
+  return { ensured: true };
+}
+
+/**
+ * UploadDocumentFlow
+ *
+ * Single canonical flow for: ensure profile row + create document metadata + upload storage object + update row.
+ *
+ * Contract:
+ * - Inputs:
+ *   - supabaseAdmin: service role supabase client
+ *   - input: { ownerId, ownerEmail?, title, description?, visibility, file{buffer,mimetype,originalname,size}, disable_download?, watermark_text? }
  * - Outputs: { document } (documents row)
  * - Errors:
  *   - validation errors -> thrown as {httpStatus, code, message}
  *   - supabase errors -> thrown with context
  * - Side effects:
+ *   - upserts public.profiles for ownerId (best-effort email)
  *   - creates/updates rows in public.documents
  *   - uploads a file to Storage bucket 'documents'
  */
 async function uploadDocumentFlow({ supabaseAdmin, input }) {
   const {
     ownerId,
+    ownerEmail,
     title,
     description,
     visibility,
@@ -90,6 +142,13 @@ async function uploadDocumentFlow({ supabaseAdmin, input }) {
       message: `unsupported mime type: ${file.mimetype}`,
     };
   }
+
+  // Step 0: ensure FK target exists (prevents documents_owner_id_fkey).
+  await ensureUserProfileRowFlow({
+    supabaseAdmin,
+    userId: ownerId,
+    userEmail: ownerEmail || null,
+  });
 
   const safeName = sanitizeFilename(file.originalname);
   const ext = path.extname(safeName) || '';
@@ -405,10 +464,15 @@ class DocumentsController {
       const file = req.file;
       const { title, description, visibility, disable_download, watermark_text } = req.body || {};
 
+      // Best-effort email for profile upsert. Using service role, this is safe and helps keep profiles populated.
+      // If Supabase does not return an email for some auth providers, we still proceed.
+      const { data: authedUser } = await req.supabaseAdmin.auth.getUser(req.auth.token);
+
       const result = await uploadDocumentFlow({
         supabaseAdmin: req.supabaseAdmin,
         input: {
           ownerId: req.auth.userId,
+          ownerEmail: authedUser?.user?.email || null,
           title,
           description,
           visibility,
