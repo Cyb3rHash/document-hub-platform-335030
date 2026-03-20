@@ -1,0 +1,11 @@
+{
+  "ignore": [
+    "node_modules/*",
+    "post_process_status.lock",
+    "*.log", "**/*.log"
+  ],
+  "watch": [
+    "src"
+  ],
+  "ext": "js,json"
+}
