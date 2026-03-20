@@ -390,6 +390,18 @@ class DocumentsController {
       if (!req.auth?.userId) {
         return fail(res, 401, 'UNAUTHORIZED', 'Authentication required.');
       }
+
+      // If Supabase env is missing, fail fast with a clear error instead of crashing
+      // when attempting to use `req.supabaseAdmin` in the upload flow.
+      if (!req.supabaseAdmin) {
+        return fail(
+          res,
+          503,
+          'SUPABASE_NOT_CONFIGURED',
+          'Upload is not available because Supabase is not configured on the backend (missing SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY).'
+        );
+      }
+
       const file = req.file;
       const { title, description, visibility, disable_download, watermark_text } = req.body || {};
 
@@ -406,7 +418,15 @@ class DocumentsController {
         },
       });
 
-      return created(res, result);
+      // Normalize response to a frontend-friendly shape.
+      // Keep `document` for detail screens; also provide top-level `id` for convenience.
+      const doc = result?.document;
+      return created(res, {
+        id: doc?.id,
+        title: doc?.title,
+        status: doc?.status,
+        document: doc,
+      });
     } catch (err) {
       if (err && err.httpStatus) {
         return fail(res, err.httpStatus, err.code, err.message, err.details);
