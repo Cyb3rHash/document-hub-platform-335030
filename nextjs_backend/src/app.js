@@ -8,23 +8,46 @@ const { attachSupabaseAndAuth } = require('./middleware/auth');
 // Initialize express app
 const app = express();
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
 app.set('trust proxy', true);
+
+/**
+ * CORS / Preflight handling
+ *
+ * Some proxy setups are sensitive to how preflight (OPTIONS) is handled. While the `cors`
+ * middleware can respond to OPTIONS automatically, making this explicit ensures that:
+ * - OPTIONS never reaches auth/db middleware
+ * - proxies/load balancers always receive a fast 204 response from the backend
+ *
+ * This reduces the chance of 502s on preflight even when GET/POST would succeed.
+ */
+const corsOptions = {
+  /**
+   * Reflect the request Origin when present (safe for browser usage), otherwise allow all.
+   * Note: We do NOT set `credentials: true` here, so `*` would also be valid. Reflecting
+   * origin is more compatible if credentials are enabled later.
+   */
+  origin: (origin, cb) => cb(null, origin || '*'),
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  maxAge: 86400, // cache preflight for 24h where supported
+};
+
+app.use(cors(corsOptions));
+
+// Explicitly short-circuit ALL OPTIONS preflights.
+app.options('*', cors(corsOptions));
+
 app.use('/docs', swaggerUi.serve, (req, res, next) => {
-  const host = req.get('host');           // may or may not include port
-  let protocol = req.protocol;          // http or https
+  const host = req.get('host'); // may or may not include port
+  let protocol = req.protocol; // http or https
 
   const actualPort = req.socket.localPort;
   const hasPort = host.includes(':');
-  
+
   const needsPort =
     !hasPort &&
     ((protocol === 'http' && actualPort !== 80) ||
-     (protocol === 'https' && actualPort !== 443));
+      (protocol === 'https' && actualPort !== 443));
   const fullHost = needsPort ? `${host}:${actualPort}` : host;
   protocol = req.secure ? 'https' : protocol;
 
