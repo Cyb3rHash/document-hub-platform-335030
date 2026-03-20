@@ -13,22 +13,58 @@ app.set('trust proxy', true);
 /**
  * CORS / Preflight handling
  *
- * Some proxy setups are sensitive to how preflight (OPTIONS) is handled. While the `cors`
- * middleware can respond to OPTIONS automatically, making this explicit ensures that:
- * - OPTIONS never reaches auth/db middleware
- * - proxies/load balancers always receive a fast 204 response from the backend
+ * We intentionally use an explicit origin allowlist driven by env so that:
+ * - Browsers are allowed to call the API from the frontend origin (fixes CORS/preflight issues)
+ * - We avoid reflecting arbitrary origins in production
  *
- * This reduces the chance of 502s on preflight even when GET/POST would succeed.
+ * Env:
+ * - FRONTEND_URL: single allowed origin (e.g. https://<frontend-host>)
+ * - CORS_ORIGINS: optional comma-separated list of allowed origins (takes precedence)
+ *
+ * Notes:
+ * - We do NOT use cookies/credentials for auth (Bearer tokens), so `credentials: false`.
+ * - We still short-circuit OPTIONS to ensure auth/db middleware is never hit for preflight.
  */
+function normalizeOrigin(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  return s.endsWith('/') ? s.slice(0, -1) : s;
+}
+
+function getAllowedOrigins() {
+  const listRaw = process.env.CORS_ORIGINS;
+  if (listRaw && String(listRaw).trim()) {
+    return String(listRaw)
+      .split(',')
+      .map((o) => normalizeOrigin(o))
+      .filter(Boolean);
+  }
+
+  const single = normalizeOrigin(process.env.FRONTEND_URL || process.env.SITE_URL);
+  return single ? [single] : [];
+}
+
+const allowedOrigins = getAllowedOrigins();
+
 const corsOptions = {
-  /**
-   * Reflect the request Origin when present (safe for browser usage), otherwise allow all.
-   * Note: We do NOT set `credentials: true` here, so `*` would also be valid. Reflecting
-   * origin is more compatible if credentials are enabled later.
-   */
-  origin: (origin, cb) => cb(null, origin || '*'),
+  origin: (origin, cb) => {
+    // Non-browser requests (curl/postman) or same-origin may omit Origin; allow them.
+    if (!origin) return cb(null, true);
+
+    const normalized = normalizeOrigin(origin);
+
+    // If no allowlist is configured, default to permissive behavior for dev/first-run.
+    if (allowedOrigins.length === 0) return cb(null, true);
+
+    if (normalized && allowedOrigins.includes(normalized)) return cb(null, true);
+
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['x-request-id'],
+  credentials: false,
   maxAge: 86400, // cache preflight for 24h where supported
 };
 
