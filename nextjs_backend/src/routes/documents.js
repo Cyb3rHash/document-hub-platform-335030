@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const documentsController = require('../controllers/documents');
+const documentProxyController = require('../controllers/documentProxy');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -391,6 +392,34 @@ router.post('/:id/view', express.json(), documentsController.recordView.bind(doc
  *         description: Signed URL returned
  */
 router.get('/:id/signed-url', documentsController.getSignedUrl.bind(documentsController));
+
+/**
+ * @swagger
+ * /documents/{id}/preview:
+ *   get:
+ *     tags: [Documents]
+ *     summary: Same-origin inline preview proxy (streams file)
+ *     description: |
+ *       Streams the document bytes through the backend under the same origin and forces `Content-Disposition: inline`
+ *       to avoid browsers blocking cross-site embeds of Supabase signed URLs.
+ *
+ *       - Anonymous users: only public/unlisted documents.
+ *       - Authenticated users: permissions enforced via RLS when possible.
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *       - in: query
+ *         name: expiresIn
+ *         schema: { type: integer, default: 900, maximum: 3600 }
+ *     responses:
+ *       200:
+ *         description: Streams the file inline (Content-Type matches the file)
+ *       404:
+ *         description: Not found / not permitted
+ */
+router.get('/:id/preview', documentProxyController.previewInline.bind(documentProxyController));
 
 /**
  * Admin-only: list raw storage objects for a document prefix (debug/ops).
