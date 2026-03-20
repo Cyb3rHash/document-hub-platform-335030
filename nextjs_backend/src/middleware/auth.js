@@ -1,5 +1,5 @@
 const { createClient } = require('@supabase/supabase-js');
-const { getSupabaseAdmin } = require('../config/supabase');
+const { getSupabaseAdmin, getSupabaseUrl, getSupabaseAnonKey } = require('../config/supabase');
 
 /**
  * Extract a bearer token from incoming request headers.
@@ -46,12 +46,12 @@ function extractBearerTokenFromHeaders(headers) {
  * Note: For RLS to apply, requests should use the anon key and the user's JWT.
  */
 function getSupabaseUserClient(jwt) {
-  const url = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const url = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
 
   if (!url || !anonKey) {
     throw new Error(
-      'Supabase env missing: SUPABASE_URL and/or SUPABASE_ANON_KEY. Please set backend .env.'
+      'Supabase env missing: SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and/or SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY). Please set backend .env.'
     );
   }
 

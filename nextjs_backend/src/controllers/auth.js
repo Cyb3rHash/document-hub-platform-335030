@@ -1,17 +1,18 @@
 const { getURL } = require('../utils/getURL');
 const { created, ok, fail, supabaseFail } = require('../utils/http');
 const { createClient } = require('@supabase/supabase-js');
+const { getSupabaseUrl, getSupabaseAnonKey } = require('../config/supabase');
 
 /**
  * Creates a Supabase anon client (used for auth flows like signUp/signInWithPassword).
  */
 function getSupabaseAnon() {
-  const url = process.env.SUPABASE_URL;
-  const anonKey = process.env.SUPABASE_ANON_KEY;
+  const url = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
 
   if (!url || !anonKey) {
     throw new Error(
-      'Supabase env missing: SUPABASE_URL and/or SUPABASE_ANON_KEY. Please set backend .env.'
+      'Supabase env missing: SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and/or SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY). Please set backend .env.'
     );
   }
 
