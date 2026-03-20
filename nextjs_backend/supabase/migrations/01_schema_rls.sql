@@ -152,6 +152,17 @@ create table if not exists public.documents (
   updated_at timestamptz not null default now()
 );
 
+-- Safety net for older schemas that predate view_count:
+-- This keeps the migration idempotent and prevents runtime errors when code expects the column.
+alter table public.documents
+  add column if not exists view_count bigint not null default 0;
+
+alter table public.documents
+  drop constraint if exists documents_view_count_non_negative;
+
+alter table public.documents
+  add constraint documents_view_count_non_negative check (view_count >= 0);
+
 create index if not exists idx_documents_owner_id on public.documents(owner_id);
 create index if not exists idx_documents_visibility on public.documents(visibility);
 create index if not exists idx_documents_created_at on public.documents(created_at);

@@ -15,8 +15,21 @@ function sanitizeFilename(filename) {
 }
 
 function normalizeSort(sort) {
-  // allowed: created_at, view_count, title
-  const allowed = new Set(['created_at', 'view_count', 'title']);
+  /**
+   * NormalizeSortForDocumentListFlow
+   *
+   * Contract:
+   * - Inputs: `sort` query string, e.g. "created_at:desc"
+   * - Output: { column: string, ascending: boolean }
+   * - Invariants:
+   *   - Only columns guaranteed to exist are allowed.
+   *
+   * NOTE:
+   * Some deployed Supabase schemas may not yet include `documents.view_count`.
+   * To ensure GET /documents never 500s due to schema drift, we do not allow
+   * sorting by `view_count` here.
+   */
+  const allowed = new Set(['created_at', 'title']);
   if (!sort) return { column: 'created_at', ascending: false };
 
   const parts = String(sort).split(':');
@@ -551,7 +564,7 @@ class DocumentsController {
       let query = client
         .from('documents')
         .select(
-          'id,owner_id,title,description,visibility,mime_type,original_filename,file_size_bytes,storage_bucket,storage_path,preview_storage_path,status,disable_download,watermark_text,view_count,created_at,updated_at',
+          'id,owner_id,title,description,visibility,mime_type,original_filename,file_size_bytes,storage_bucket,storage_path,preview_storage_path,status,disable_download,watermark_text,created_at,updated_at',
           { count: 'exact' }
         );
 
