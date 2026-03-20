@@ -59,11 +59,24 @@ function getSupabaseUserClient(jwt) {
 // PUBLIC_INTERFACE
 async function attachSupabaseAndAuth(req, res, next) {
   try {
-    req.supabaseAdmin = getSupabaseAdmin();
-
+    // Default request auth context (always present).
     const token = extractBearerToken(req.headers.authorization);
     req.auth = { token, userId: null, role: 'anon' };
+
+    // Default supabase clients to null; controllers can decide how to behave.
+    req.supabaseAdmin = null;
     req.supabase = null;
+    req.supabaseEnvMissing = false;
+
+    // Supabase env may be missing in some deployments (e.g. local CI, first-run).
+    // This middleware is intentionally non-enforcing; missing env should not crash
+    // the entire API surface with 500s.
+    try {
+      req.supabaseAdmin = getSupabaseAdmin();
+    } catch (e) {
+      req.supabaseEnvMissing = true;
+      return next();
+    }
 
     if (!token) return next();
 
@@ -76,7 +89,15 @@ async function attachSupabaseAndAuth(req, res, next) {
 
     req.auth.userId = data.user.id;
     req.auth.role = 'authenticated';
-    req.supabase = getSupabaseUserClient(token);
+
+    // A user-scoped client additionally requires SUPABASE_ANON_KEY; if it's missing,
+    // keep request authenticated but skip attaching req.supabase so controllers can
+    // fall back to admin or return a clearer error.
+    try {
+      req.supabase = getSupabaseUserClient(token);
+    } catch (e) {
+      req.supabase = null;
+    }
 
     return next();
   } catch (err) {

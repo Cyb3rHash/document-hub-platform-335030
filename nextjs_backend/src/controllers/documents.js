@@ -429,6 +429,22 @@ class DocumentsController {
   // PUBLIC_INTERFACE
   async list(req, res, next) {
     try {
+      // If Supabase env is not configured, this endpoint should not crash with a 500.
+      // Return an empty list payload so the frontend can load and show an "empty state"
+      // while configuration is completed.
+      if (!req.supabaseAdmin) {
+        return ok(
+          res,
+          { items: [] },
+          {
+            count: 0,
+            limit: 0,
+            offset: 0,
+            warning: 'Supabase is not configured on the backend (missing SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY).',
+          }
+        );
+      }
+
       const q = (req.query.q || '').toString().trim();
       const visibility = req.query.visibility ? String(req.query.visibility) : null;
       const owner = req.query.owner ? String(req.query.owner) : null;
@@ -437,6 +453,8 @@ class DocumentsController {
       const { column: sortColumn, ascending } = normalizeSort(req.query.sort);
 
       const isAuthed = Boolean(req.auth?.userId);
+
+      // Only attempt admin check when Supabase is available.
       const isAdmin = await this._isAdminCached(req);
 
       // IMPORTANT:
