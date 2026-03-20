@@ -1,5 +1,10 @@
 const { createClient } = require('@supabase/supabase-js');
-const { getSupabaseAdmin, getSupabaseUrl, getSupabaseAnonKey } = require('../config/supabase');
+const {
+  getSupabaseAdmin,
+  getSupabaseUrl,
+  getSupabaseAnonKey,
+  getSupabaseEnvDiagnostics,
+} = require('../config/supabase');
 
 /**
  * Extract a bearer token from incoming request headers.
@@ -122,9 +127,19 @@ async function attachSupabaseAndAuth(req, res, next) {
       req.supabaseAdmin = getSupabaseAdmin();
     } catch (e) {
       req.supabaseEnvMissing = true;
+
+      // Safe diagnostics: only env *names* and booleans, never secret values.
+      const diag = getSupabaseEnvDiagnostics();
+
       if (token) {
         req.auth.error = 'SUPABASE_ADMIN_ENV_MISSING';
-        res.setHeader('x-auth-debug', 'supabase_admin_env_missing');
+        res.setHeader(
+          'x-auth-debug',
+          JSON.stringify({
+            reason: 'supabase_admin_env_missing',
+            supabaseEnv: diag,
+          })
+        );
       }
       return next();
     }

@@ -1,3 +1,15 @@
+/**
+ * Ensure local development and self-hosted deployments load environment variables
+ * from a `.env` file.
+ *
+ * IMPORTANT:
+ * - In managed platforms (Railway/Vercel/etc.), env vars are injected by the platform.
+ * - In local dev/preview, `.env` must be loaded explicitly or `process.env.*` will be empty.
+ *
+ * This is intentionally done at the entrypoint so all downstream modules see populated env.
+ */
+require('dotenv').config();
+
 const app = require('./app');
 
 const PORT = process.env.PORT || 3000;
